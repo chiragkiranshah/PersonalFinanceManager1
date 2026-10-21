@@ -30,6 +30,19 @@ services:
       timeout: 10s
       retries: 10
 
+  identity-api:
+    build:
+      context: ./src/Services/Identity/Identity.Api
+      dockerfile: Dockerfile
+    container_name: finance-identity-api
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      Jwt__Key: ${JWT_KEY:-development-secret-key-please-change}
+      Jwt__Issuer: ${JWT_ISSUER:-PersonalFinanceManager.Identity}
+      Jwt__Audience: ${JWT_AUDIENCE:-PersonalFinanceManager.Api}
+    ports:
+      - "5100:8080"
+
   account-api:
     build:
       context: ./src/Services/Account/Account.Api
@@ -38,6 +51,9 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: Development
       ConnectionStrings__DefaultConnection: ${ACCOUNT_DB_CONNECTION_STRING}
+      Jwt__Key: ${JWT_KEY:-development-secret-key-please-change}
+      Jwt__Issuer: ${JWT_ISSUER:-PersonalFinanceManager.Identity}
+      Jwt__Audience: ${JWT_AUDIENCE:-PersonalFinanceManager.Api}
     depends_on:
       sqlserver:
         condition: service_healthy
@@ -52,6 +68,9 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: Development
       ConnectionStrings__DefaultConnection: ${TRANSACTION_DB_CONNECTION_STRING}
+      Jwt__Key: ${JWT_KEY:-development-secret-key-please-change}
+      Jwt__Issuer: ${JWT_ISSUER:-PersonalFinanceManager.Identity}
+      Jwt__Audience: ${JWT_AUDIENCE:-PersonalFinanceManager.Api}
     depends_on:
       sqlserver:
         condition: service_healthy
@@ -67,9 +86,20 @@ services:
     container_name: finance-gateway
     environment:
       ASPNETCORE_ENVIRONMENT: Development
+      ReverseProxy__Routes__identityRoute__ClusterId: identityCluster
+      ReverseProxy__Routes__identityRoute__Match__Path: /api/v1/auth/{**catch-all}
+      ReverseProxy__Routes__identityUserRoute__ClusterId: identityCluster
+      ReverseProxy__Routes__identityUserRoute__Match__Path: /api/v1/users/{**catch-all}
+      ReverseProxy__Routes__accountRoute__ClusterId: accountCluster
+      ReverseProxy__Routes__accountRoute__Match__Path: /api/v1/accounts/{**catch-all}
+      ReverseProxy__Routes__transactionRoute__ClusterId: transactionCluster
+      ReverseProxy__Routes__transactionRoute__Match__Path: /api/v1/transactions/{**catch-all}
+      ReverseProxy__Clusters__identityCluster__Destinations__identityService__Address: http://identity-api:8080
       ReverseProxy__Clusters__accountCluster__Destinations__accountService__Address: http://account-api:8080
       ReverseProxy__Clusters__transactionCluster__Destinations__transactionService__Address: http://transaction-api:8080
     depends_on:
+      identity-api:
+        condition: service_started
       account-api:
         condition: service_started
       transaction-api:

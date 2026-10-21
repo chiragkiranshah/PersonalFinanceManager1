@@ -1,8 +1,11 @@
-using System.ComponentModel.DataAnnotations;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
 using PersonalFinanceManager.Accounts.Application;
-using PersonalFinanceManager.Accounts.Domain;
 using PersonalFinanceManager.Accounts.Infrastructure;
+using System.Security.Claims;
+using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -11,6 +14,23 @@ builder.Services.AddSwaggerGen();
 builder.Services.AddProblemDetails();
 builder.Services.AddHealthChecks()
     .AddDbContextCheck<AccountDbContext>();
+
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuer = true,
+            ValidateAudience = true,
+            ValidateLifetime = true,
+            ValidateIssuerSigningKey = true,
+            ValidIssuer = builder.Configuration["Jwt:Issuer"],
+            ValidAudience = builder.Configuration["Jwt:Audience"],
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(builder.Configuration["Jwt:Key"] ?? "development-secret-key-please-change"))
+        };
+    });
+
+builder.Services.AddAuthorization();
 
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
     ?? "Server=localhost,1433;Database=FinanceAccountsDb;User Id=sa;Password=YourStrong!Passw0rd;TrustServerCertificate=True;";
@@ -29,25 +49,28 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
+app.UseAuthentication();
+app.UseAuthorization();
+
 app.MapHealthChecks("/health");
 
-app.MapGet("/api/v1/accounts/{id:guid}", async (Guid id, AccountService accountService, CancellationToken cancellationToken) =>
+app.MapGet("/api/v1/accounts/{id:guid}", async (Guid id, AccountService accountService, HttpContext httpContext, CancellationToken cancellationToken) =>
 {
-    var userId = ResolveCurrentUserId();
+    var userId = GetCurrentUserId(httpContext);
     var result = await accountService.GetAsync(id, userId, cancellationToken);
     return result is null ? Results.NotFound() : Results.Ok(result);
-});
+}).RequireAuthorization();
 
-app.MapGet("/api/v1/accounts", async (AccountService accountService, CancellationToken cancellationToken) =>
+app.MapGet("/api/v1/accounts", async (AccountService accountService, HttpContext httpContext, CancellationToken cancellationToken) =>
 {
-    var userId = ResolveCurrentUserId();
+    var userId = GetCurrentUserId(httpContext);
     var result = await accountService.ListAsync(userId, cancellationToken);
     return Results.Ok(result);
-});
+}).RequireAuthorization();
 
-app.MapPost("/api/v1/accounts", async (CreateAccountRequest request, AccountService accountService, CancellationToken cancellationToken) =>
+app.MapPost("/api/v1/accounts", async (CreateAccountRequest request, AccountService accountService, HttpContext httpContext, CancellationToken cancellationToken) =>
 {
-    var userId = ResolveCurrentUserId();
+    var userId = GetCurrentUserId(httpContext);
     try
     {
         var account = await accountService.CreateAsync(request, userId, cancellationToken);
@@ -60,11 +83,11 @@ app.MapPost("/api/v1/accounts", async (CreateAccountRequest request, AccountServ
             ["request"] = new[] { ex.Message }
         }));
     }
-});
+}).RequireAuthorization();
 
-app.MapPut("/api/v1/accounts/{id:guid}", async (Guid id, UpdateAccountRequest request, AccountService accountService, CancellationToken cancellationToken) =>
+app.MapPut("/api/v1/accounts/{id:guid}", async (Guid id, UpdateAccountRequest request, AccountService accountService, HttpContext httpContext, CancellationToken cancellationToken) =>
 {
-    var userId = ResolveCurrentUserId();
+    var userId = GetCurrentUserId(httpContext);
     try
     {
         var updated = await accountService.UpdateAsync(id, request, userId, cancellationToken);
@@ -77,18 +100,29 @@ app.MapPut("/api/v1/accounts/{id:guid}", async (Guid id, UpdateAccountRequest re
             ["request"] = new[] { ex.Message }
         }));
     }
-});
+}).RequireAuthorization();
 
-app.MapDelete("/api/v1/accounts/{id:guid}", async (Guid id, AccountService accountService, CancellationToken cancellationToken) =>
+app.MapDelete("/api/v1/accounts/{id:guid}", async (Guid id, AccountService accountService, HttpContext httpContext, CancellationToken cancellationToken) =>
 {
-    var userId = ResolveCurrentUserId();
-    var deleted = await accountService.DeleteAsync(id, userId, cancellationToken);
-    return deleted ? Results.NoContent() : Results.NotFound();
-});
+    var userId = GetCurrentUserId(httpContext);
+    try
+    {
+        var deleted = await accountService.DeleteAsync(id, userId, cancellationToken);
+        return deleted ? Results.NoContent() : Results.NotFound();
+    }
+    catch (InvalidOperationException ex)
+    {
+        return Results.Problem(detail: ex.Message, statusCode: StatusCodes.Status409Conflict, title: "Account deletion rejected");
+    }
+}).RequireAuthorization();
 
 app.Run();
 
-static Guid ResolveCurrentUserId()
+static Guid GetCurrentUserId(HttpContext httpContext)
 {
-    return Guid.Parse("11111111-1111-1111-1111-111111111111");
+    var claim = httpContext.User.FindFirst(ClaimTypes.NameIdentifier)?.Value
+        ?? httpContext.User.FindFirst("sub")?.Value
+        ?? httpContext.User.FindFirst("userId")?.Value;
+
+    return Guid.TryParse(claim, out var userId) ? userId : Guid.Empty;
 }

@@ -6,7 +6,7 @@ namespace Finance.Domain.Tests;
 public class AccountTests
 {
     [Fact]
-    public void Create_Account_WithRealisticValues_ShouldStoreBalance()
+    public void Create_WhenValidData_ShouldInitializeAccountState()
     {
         var userId = Guid.NewGuid();
 
@@ -14,12 +14,13 @@ public class AccountTests
 
         Assert.Equal(userId, account.UserId);
         Assert.Equal("Primary Checking", account.Name);
+        Assert.Equal("USD", account.Currency);
         Assert.Equal(1200m, account.CurrentBalance);
         Assert.Equal(AccountStatus.Active, account.Status);
     }
 
     [Fact]
-    public void Debit_WhenInsufficientFunds_ShouldThrow()
+    public void Debit_WhenBalanceWouldGoNegative_ShouldThrow()
     {
         var account = Account.Create(Guid.NewGuid(), "Emergency", AccountType.Checking, "USD", 50m);
 
@@ -43,5 +44,11 @@ public class AccountTests
         var right = new Money(50m, "EUR");
 
         Assert.Throws<InvalidOperationException>(() => left.Add(right));
+    }
+
+    [Fact]
+    public void InvalidCurrency_ShouldThrow()
+    {
+        Assert.Throws<ArgumentException>(() => CurrencyCode.Validate("US"));
     }
 }

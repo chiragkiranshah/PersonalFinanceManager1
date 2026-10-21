@@ -1,5 +1,4 @@
 using Microsoft.EntityFrameworkCore;
-using PersonalFinanceManager.Accounts.Application;
 using PersonalFinanceManager.Accounts.Domain;
 
 namespace PersonalFinanceManager.Accounts.Infrastructure;

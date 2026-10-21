@@ -1,8 +1,10 @@
+using System.ComponentModel.DataAnnotations;
 using PersonalFinanceManager.Accounts.Domain;
 
 namespace PersonalFinanceManager.Accounts.Application;
 
 public record CreateAccountRequest(string Name, string AccountType, string Currency, decimal OpeningBalance);
+public record UpdateAccountRequest(string Name, string AccountType, string Currency);
 public record AccountResponse(Guid Id, Guid UserId, string Name, string AccountType, string Currency, decimal OpeningBalance, decimal CurrentBalance, string Status);
 
 public interface IAccountRepository
@@ -18,6 +20,11 @@ public class AccountService(IAccountRepository repository)
 {
     public async Task<AccountResponse> CreateAsync(CreateAccountRequest request, Guid userId, CancellationToken cancellationToken = default)
     {
+        if (string.IsNullOrWhiteSpace(request.Name))
+        {
+            throw new ArgumentException("Account name is required.", nameof(request));
+        }
+
         if (!Enum.TryParse<AccountType>(request.AccountType, true, out var accountType))
         {
             throw new ArgumentException("Invalid account type.", nameof(request));
@@ -44,6 +51,41 @@ public class AccountService(IAccountRepository repository)
     {
         var accounts = await repository.ListAsync(userId, cancellationToken);
         return accounts.Select(Map).ToList();
+    }
+
+    public async Task<AccountResponse?> UpdateAsync(Guid id, UpdateAccountRequest request, Guid userId, CancellationToken cancellationToken = default)
+    {
+        var account = await repository.GetByIdAsync(id, cancellationToken);
+        if (account is null || account.UserId != userId)
+        {
+            return null;
+        }
+
+        if (!Enum.TryParse<AccountType>(request.AccountType, true, out var accountType))
+        {
+            throw new ArgumentException("Invalid account type.", nameof(request));
+        }
+
+        account.Update(request.Name, accountType, request.Currency);
+        await repository.UpdateAsync(account, cancellationToken);
+        return Map(account);
+    }
+
+    public async Task<bool> DeleteAsync(Guid id, Guid userId, CancellationToken cancellationToken = default)
+    {
+        var account = await repository.GetByIdAsync(id, cancellationToken);
+        if (account is null || account.UserId != userId)
+        {
+            return false;
+        }
+
+        if (account.CurrentBalance != 0m)
+        {
+            throw new InvalidOperationException("Cannot delete an account with a non-zero balance.");
+        }
+
+        await repository.DeleteAsync(id, cancellationToken);
+        return true;
     }
 
     private static AccountResponse Map(Account account) => new(
